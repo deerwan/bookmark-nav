@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,7 +45,19 @@ export default function Login() {
 	}
 
 	return (
-		<div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
+		<div className="relative flex min-h-screen items-center justify-center bg-muted/40 px-4">
+			{/* 返回前台:后台未登录跳转是 replace 进来的,history.back() 会失效,固定回首页最稳 */}
+			<Button
+				variant="ghost"
+				size="sm"
+				className="absolute top-4 left-4 text-muted-foreground"
+				asChild
+			>
+				<Link to="/">
+					<ArrowLeft className="size-4 shrink-0" />
+					返回首页
+				</Link>
+			</Button>
 			<Card className="w-full max-w-sm">
 				<CardHeader>
 					<CardTitle>{isSetup ? "初始化管理员" : "登录"}</CardTitle>
