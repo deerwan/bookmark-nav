@@ -10,6 +10,7 @@
 | `npm run build` | 生产构建:`prepare-deploy-config` 注入构建变量 → tsc → vite build |
 | `npm run check` | 完整校验:tsc + vite build + wrangler deploy --dry-run(部署前必跑) |
 | `npm run lint` | ESLint 检查全部源码 |
+| `npm test` | 运行单元测试(Vitest,`src/**/*.test.ts`) |
 | `npm run preview` | 构建后本地预览生产包 |
 | `npm run deploy` | 应用 D1 迁移(remote)→ wrangler deploy(正式部署) |
 | `npm run db:migrate` | 仅对远程 D1 应用迁移 |
@@ -33,7 +34,7 @@
 ```bash
 npm install
 cp .dev.vars.example .dev.vars   # 填入任意 JWT_SECRET
-npx wrangler d1 migrations apply DB --local
+npx wrangler d1 migrations apply DB --local   # 须在 npm run dev 之前(dev server 会锁住本地 D1)
 npm run dev                      # http://localhost:5173
 ```
 
@@ -46,6 +47,12 @@ npm run dev                      # http://localhost:5173
 | `npx wrangler d1 migrations apply DB --remote` | 应用迁移到远程 D1(等同 `npm run db:migrate`) |
 
 > schema 在 `src/worker/db/schema.ts`,迁移在 `drizzle/`,journal 在 `drizzle/meta/_journal.json`。
+
+> ⚠️ **本地迁移前先停掉 dev server**:dev server(workerd)会持有本地 D1 的 SQLite 文件锁,
+> 此时执行 `d1 migrations apply/execute --local` 会报
+> `database is locked: SQLITE_BUSY (extended: SQLITE_BUSY_RECOVERY)`。
+> 正确顺序:停 dev server → 应用迁移 → 重新 `npm run dev`。
+> 手写数据迁移(如 0005 的 DELETE)可先用内存 SQLite 验证语义(参考 `src/worker/db/purge.test.ts`)。
 
 ## 其他常用
 

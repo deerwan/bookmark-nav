@@ -35,13 +35,13 @@ src/
 ```bash
 npm install
 cp .dev.vars.example .dev.vars   # 填入任意 JWT_SECRET(本地登录会话签名)
-npx wrangler d1 migrations apply DB --local
+npx wrangler d1 migrations apply DB --local   # 须在 npm run dev 之前(dev server 会锁住本地 D1)
 npm run dev                      # http://localhost:5173(前后端热重载)
 ```
 
 - 本地数据库在 `.wrangler/state/v3/d1/`,改动 schema 后:
   1. `npx drizzle-kit generate --name xxx` 生成迁移
-  2. `npx wrangler d1 migrations apply DB --local` 应用
+  2. `npx wrangler d1 migrations apply DB --local` 应用(注意:先停 dev server,workerd 会锁住本地 D1 文件导致 `SQLITE_BUSY`,见 [commands.md](./commands.md))
 - 本地测试账号 `admin / password`,见 [commands.md](./commands.md)。
 - 插件开发:见 [extension.md](./extension.md) 的「插件开发」。
 

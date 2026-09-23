@@ -14,7 +14,7 @@ import {
 } from "../db/schema";
 import type { AppEnv } from "../lib/types";
 import { requireAuth } from "../middleware/auth";
-import { mergeDefaultSettings } from "../lib/settings";
+import { mergeDefaultSettings, filterAdminSettings } from "../lib/settings";
 import { validateCategoryNesting } from "../lib/category-nesting";
 import { checkUrl } from "../lib/check-url";
 import { backupToR2, buildBackupPayload } from "../lib/backup";
@@ -815,14 +815,19 @@ ${pageText || "（无）"}`;
 		"/settings",
 		zValidator("json", z.record(z.string(), z.string())),
 		async (c) => {
+			// 白名单过滤:未知键忽略并报告(系统内部键如 deadLink.lastRun 不允许从前端写)
+			const { kept, ignored } = filterAdminSettings(c.req.valid("json"));
+			if (ignored.length > 0) {
+				console.warn("[settings] 忽略未知设置键:", ignored.join(", "));
+			}
 			const db = createDb(c.env.DB);
-			for (const [key, value] of Object.entries(c.req.valid("json"))) {
+			for (const [key, value] of Object.entries(kept)) {
 				await db
 					.insert(settings)
 					.values({ key, value })
 					.onConflictDoUpdate({ target: settings.key, set: { value } });
 			}
-			return c.json({ ok: true });
+			return c.json({ ok: true, ignored: ignored.length > 0 ? ignored : undefined });
 		},
 	)
 	// ---------- 手动备份到 R2(定时任务之外按需触发) ----------

@@ -68,7 +68,8 @@ async function attachTags<T extends { id: number }>(db: Db, rows: T[]) {
 // 允许匿名读取的站点配置键。
 // settings 表里还存着 ai.apiKey / ai.apiEndpoint 等敏感配置,必须对下发的键做白名单,
 // 否则任何访客访问 /api/public/site 都能拿到 AI 密钥明文。
-const PUBLIC_SETTING_KEYS = new Set([
+// 导出供 settings.test.ts 校验「公开白名单 ⊆ 管理白名单」的不变式
+export const PUBLIC_SETTING_KEYS = new Set([
 	"siteName",
 	"footer",
 	"icon.service",

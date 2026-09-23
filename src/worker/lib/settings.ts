@@ -27,3 +27,48 @@ export function mergeDefaultSettings(rows: { key: string; value: string }[]) {
 	}
 	return Object.fromEntries(map);
 }
+
+// 后台「保存设置」接口可写入的键白名单。settings 表还存着系统内部状态
+// (deadLink.lastRun / deadLink.dead / backup.lastRun),这些只能由检测/备份任务写入;
+// 没有白名单的话,PUT /settings 会接受任意键,脏键将永久留在表里且无法从后台清除。
+// 注意:PUBLIC_SETTING_KEYS(公开下发白名单)是这里的子集,公开面比管理面更紧。
+export const ADMIN_SETTING_KEYS = new Set([
+	// 站点设置
+	"siteName",
+	"footer",
+	"icon.service",
+	"showGithubLink",
+	// 外观设置
+	"appearance.compact",
+	"appearance.anchorNav",
+	"appearance.style",
+	// 自动任务
+	"maintenance.checkLinks",
+	"maintenance.backup",
+	"deadLink.schedule",
+	"backup.schedule",
+	// AI 设置
+	"ai.enabled",
+	"ai.provider",
+	"ai.apiEndpoint",
+	"ai.apiKey",
+	"ai.model",
+	"ai.features.autoFill",
+	"ai.features.tagSuggest",
+	"ai.features.semanticSearch",
+	"ai.features.summary",
+	"ai.features.autoCategorize",
+	"ai.features.deadLinkRepair",
+]);
+
+// 按白名单切分保存请求:kept 为应写入的键值,ignored 为被拒绝的未知键(返回给前端提示)
+export function filterAdminSettings(input: Record<string, string>) {
+	const kept: Record<string, string> = {};
+	const ignored: string[] = [];
+	for (const [key, value] of Object.entries(input)) {
+		if (ADMIN_SETTING_KEYS.has(key)) kept[key] = value;
+		else ignored.push(key);
+	}
+	return { kept, ignored };
+}
+

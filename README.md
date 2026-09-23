@@ -19,7 +19,7 @@
 ```bash
 npm install
 cp .dev.vars.example .dev.vars   # 填入任意 JWT_SECRET
-npx wrangler d1 migrations apply DB --local
+npx wrangler d1 migrations apply DB --local   # 须在 npm run dev 之前(dev server 会锁住本地 D1)
 npm run dev                      # http://localhost:5173
 ```
 
