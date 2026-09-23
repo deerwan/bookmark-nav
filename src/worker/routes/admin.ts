@@ -15,6 +15,7 @@ import {
 import type { AppEnv } from "../lib/types";
 import { requireAuth } from "../middleware/auth";
 import { mergeDefaultSettings } from "../lib/settings";
+import { validateCategoryNesting } from "../lib/category-nesting";
 import { checkUrl } from "../lib/check-url";
 import { backupToR2, buildBackupPayload } from "../lib/backup";
 import { checkAllLinks } from "../lib/maintenance";
@@ -26,51 +27,13 @@ import {
 } from "../lib/netscape";
 import { extractJson, loadAISettings, runChat, testModel } from "../lib/ai";
 import { generateApiToken, hashApiToken, tokenHint } from "../lib/token";
+import { isHttpUrl, httpUrlSchema } from "../lib/http-url";
 
 const idParam = zValidator("param", z.object({ id: z.coerce.number().int() }));
 // 与其余批量接口一致限制单次条数:reorder 逐条 UPDATE,不设上限会拖垮请求
 const reorderSchema = z.object({ ids: z.array(z.number().int()).min(1).max(1000) });
 
-// 手动创建/移动分类限制最多三级(导入不受限,保留浏览器书签原始层级)
-const MAX_CATEGORY_DEPTH = 3;
-
-// 校验分类挂到 parentId 下是否合法:防循环嵌套 + 限制最大层级(移动时连同子树一起算)
-function validateCategoryNesting(
-	all: { id: number; parentId: number | null }[],
-	parentId: number,
-	movingId?: number,
-): string | null {
-	const parentOf = new Map(all.map((r) => [r.id, r.parentId]));
-	if (movingId !== undefined) {
-		if (parentId === movingId) return "不能以自己为父级";
-		let cur: number | null = parentId;
-		while (cur != null) {
-			if (cur === movingId) return "不能形成循环嵌套";
-			cur = parentOf.get(cur) ?? null;
-		}
-	}
-	// 父级所在层级(1-based)
-	let parentDepth = 0;
-	for (let cur: number | null = parentId; cur != null; cur = parentOf.get(cur) ?? null) {
-		parentDepth++;
-	}
-	// 被移动子树的高度(新建时为 1)
-	const childrenOf = new Map<number, number[]>();
-	for (const r of all) {
-		if (r.parentId != null) {
-			const list = childrenOf.get(r.parentId) ?? [];
-			list.push(r.id);
-			childrenOf.set(r.parentId, list);
-		}
-	}
-	const height = (id: number): number =>
-		1 + Math.max(0, ...(childrenOf.get(id) ?? []).map(height));
-	const subtreeHeight = movingId !== undefined ? height(movingId) : 1;
-	if (parentDepth + subtreeHeight > MAX_CATEGORY_DEPTH) {
-		return `最多支持 ${MAX_CATEGORY_DEPTH} 级分类`;
-	}
-	return null;
-}
+// 校验分类挂到 parentId 下是否合法:防循环嵌套 + 限制最大层级,见 lib/category-nesting
 
 const categoryInput = z.object({
 	name: z.string().min(1).max(50),
@@ -82,7 +45,8 @@ const categoryInput = z.object({
 
 const bookmarkInput = z.object({
 	title: z.string().min(1).max(200),
-	url: z.string().url().max(2000),
+	// 强制 http(s):z.string().url() 会放过 javascript: 等协议,渲染成 <a href> 就是存储型 XSS
+	url: httpUrlSchema,
 	description: z.string().max(500).nullish(),
 	icon: z.string().max(2000).nullish(),
 	categoryId: z.number().int().nullish(),
@@ -404,7 +368,7 @@ export const adminRoutes = new Hono<AppEnv>()
 	// ---------- 元信息抓取 ----------
 	.post(
 		"/metadata",
-		zValidator("json", z.object({ url: z.string().url() })),
+		zValidator("json", z.object({ url: httpUrlSchema })),
 		async (c) => {
 			try {
 				return c.json(await fetchMetadata(c.req.valid("json").url));
@@ -416,7 +380,7 @@ export const adminRoutes = new Hono<AppEnv>()
 	// ---------- AI 智能填充 ----------
 	.post(
 		"/metadata-ai",
-		zValidator("json", z.object({ url: z.string().url() })),
+		zValidator("json", z.object({ url: httpUrlSchema })),
 		async (c) => {
 			const db = createDb(c.env.DB);
 			const aiSettings = await loadAISettings(db);
@@ -739,7 +703,7 @@ ${pageText || "（无）"}`;
 	// ---------- AI 死链修复建议 ----------
 	.post(
 		"/repair-link",
-		zValidator("json", z.object({ title: z.string(), url: z.string().url() })),
+		zValidator("json", z.object({ title: z.string(), url: httpUrlSchema })),
 		async (c) => {
 			const db = createDb(c.env.DB);
 			const aiSettings = await loadAISettings(db);
@@ -771,9 +735,17 @@ ${pageText || "（无）"}`;
 					db,
 				);
 				const parsed = extractJson<{ alternative?: string | null; wayback?: string; reason?: string }>(raw);
+				// AI 输出不可信(幻觉或被抓取页面注入):渲染成 <a href> 前强制 http(s),
+				// 非法协议置 null,前端按"无建议"展示
+				const alternative =
+					parsed.alternative && isHttpUrl(parsed.alternative) ? parsed.alternative : null;
+				const wayback =
+					parsed.wayback && isHttpUrl(parsed.wayback)
+						? parsed.wayback
+						: `https://web.archive.org/web/2024/${url}`;
 				return c.json({
-					alternative: parsed.alternative ?? null,
-					wayback: parsed.wayback ?? `https://web.archive.org/web/2024/${url}`,
+					alternative,
+					wayback,
 					reason: parsed.reason ?? "",
 				});
 			} catch (err) {
@@ -944,7 +916,7 @@ ${pageText || "（无）"}`;
 				catIdMap.set(cat.id, id);
 			}
 
-			// 2) 书签:同 URL 跳过;还原时间戳/置顶/可见性/死链状态
+			// 2) 书签:同 URL 跳过;强制 http(s) 协议(备份文件是外部输入);还原时间戳/置顶/可见性/死链状态
 			const existingUrls = new Set(
 				(await db.select({ url: bookmarks.url }).from(bookmarks)).map((r) => r.url),
 			);
@@ -957,6 +929,10 @@ ${pageText || "（无）"}`;
 					url = new URL(b.url).href;
 				} catch {
 					continue; // 非法网址跳过
+				}
+				if (!isHttpUrl(url)) {
+					skipped++; // javascript:/data: 等协议一并计入跳过数
+					continue;
 				}
 				if (existingUrls.has(url)) {
 					skipped++;

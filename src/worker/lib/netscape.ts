@@ -61,10 +61,12 @@ export function parseNetscapeHtml(html: string): ParsedFolder {
 			const href = attr(attrs, "HREF");
 			if (!href || !/^https?:\/\//i.test(href)) continue; // 跳过 javascript:/place: 等
 			const addDate = attr(attrs, "ADD_DATE");
+			const iconAttr = attr(attrs, "ICON");
 			top.bookmarks.push({
 				title: decodeEntities(m[4].trim()) || href,
 				url: decodeEntities(href),
-				icon: attr(attrs, "ICON"),
+				// icon 与 title/href 一样做实体反转义,保证 build → parse 往返无损
+				icon: iconAttr ? decodeEntities(iconAttr) : null,
 				addDate: addDate ? Number(addDate) || null : null,
 			});
 		} else {

@@ -33,6 +33,15 @@ const app = new Hono<AppEnv>()
 		await next();
 		c.header("Cache-Control", "private, no-store");
 	})
+	// 基础安全响应头:API 全是 JSON(防 MIME 嗅探),页面不允许被 iframe 嵌套(防点击劫持)
+	.use("*", async (c, next) => {
+		await next();
+		c.header("X-Content-Type-Options", "nosniff");
+		c.header("X-Frame-Options", "DENY");
+		c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+		// CSP frame-ancestors 是现代标准,与 X-Frame-Options 双保险;API 响应无害但加上无妨
+		c.header("Content-Security-Policy", "frame-ancestors 'none'");
+	})
 	.route("/api/auth", authRoutes)
 	.route("/api/public", publicRoutes)
 	.route("/api/admin", adminRoutes);

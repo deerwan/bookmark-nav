@@ -1,6 +1,6 @@
-import { inArray } from "drizzle-orm";
+import { inArray, lt } from "drizzle-orm";
 import { createDb, type Db } from "../db/client";
-import { bookmarks, settings } from "../db/schema";
+import { aiUsage, bookmarks, settings } from "../db/schema";
 import { checkUrl } from "./check-url";
 import { backupToR2 } from "./backup";
 import {
@@ -91,15 +91,35 @@ async function readSettingsMap(db: Db): Promise<Map<string, string>> {
 	return new Map(rows.map((r) => [r.key, r.value]));
 }
 
+// AI 用量记录保留天数:超期记录由定时任务清理,防止表无限增长
+const AI_USAGE_RETENTION_DAYS = 30;
+
+// 清理过期 AI 用量记录。失败不影响其他任务,由调用方 catch
+export async function pruneAIUsage(db: Db): Promise<number> {
+	const cutoff = new Date(Date.now() - AI_USAGE_RETENTION_DAYS * 86_400_000);
+	const deleted = await db
+		.delete(aiUsage)
+		.where(lt(aiUsage.createdAt, cutoff))
+		.returning({ id: aiUsage.id });
+	return deleted.length;
+}
+
 // 定时任务入口:由每小时整点的 cron 调用,按后台配置的开关与计划判断各任务是否到点。
 // 缺省视为开启;显式保存过 "0" 才关闭。后台手动触发不经过这里,不受开关/计划限制。
 export async function runScheduledTasks(
 	env: Env,
-): Promise<{ checked: boolean; backed: boolean }> {
+): Promise<{ checked: boolean; backed: boolean; pruned: number }> {
 	const db = createDb(env.DB);
 	const map = await readSettingsMap(db);
 	const enabled = (key: string) => map.get(key) === "1";
-	const result = { checked: false, backed: false };
+	const result = { checked: false, backed: false, pruned: 0 };
+
+	// 用量清理无开关(纯内部维护,量小代价低),每次 cron 顺带执行
+	try {
+		result.pruned = await pruneAIUsage(db);
+	} catch (err) {
+		console.error("[maintenance] AI 用量清理失败:", err);
+	}
 
 	if (
 		enabled("maintenance.checkLinks") &&

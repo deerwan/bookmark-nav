@@ -23,6 +23,13 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # 主站类型检查:后端(Worker)+ 前端一起,防止类型错误流进部署产物
+      - name: 主站类型检查
+        run: npx tsc -b
+
+      - name: 单元测试
+        run: npm test
+
       - name: 插件类型检查
         run: npm run typecheck:ext
 
