@@ -86,19 +86,56 @@ npx wxt submit --chrome-zip .output/*-chrome.zip \
 | `ci.yml` | push / PR | typecheck:ext + Chrome/Firefox 构建 + lint,防错误流入产物 |
 | `release.yml` | 推送 `v*` 标签 / 手动 | 校验 tag 与版本一致 → 构建打包 → 检查源码包无敏感文件 → 发布到 GitHub Releases;手动触发时跳过发布,改为上传 zip 到运行详情页的 Artifacts(保留 7 天)供下载试用 |
 
-**发版流程**(约定与 release.yml 的硬校验一致):
+**发版规范**(核心:版本在 `package.json`、发布靠 tag 触发、一个版本一次发布):
+
+推送 `v*` 标签后,workflow 自动把 `-chrome.zip` / `-firefox.zip` / `-sources.zip` 三个安装包挂到对应 Release,用户可直接下载后手动安装(侧载),无需 clone 构建。这是商店审核渠道之外的**即时分发补充**。
+
+#### 版本号规则
+
+| 项 | 约定 |
+| --- | --- |
+| 唯一来源 | 只改 `package.json` 的 `version`——`wxt.config.ts` 不写死版本、构建时继承,自动进 manifest 与 zip 文件名 |
+| bump 命令 | `npm version patch --no-git-tag-version`(**不要**用默认会打 tag 的形式) |
+| 语义化 | 修 bug → patch(0.1.1);新功能 → minor(0.2.0);破坏性变更 → major(1.0.0) |
+
+#### 标准发版流程
 
 ```bash
-# 1. 手动 bump 版本
-npm version patch --no-git-tag-version     # 或手动改 package.json 的 version
-# 2. 提交 + 打同版本标签
-git add package.json package-lock.json && git commit -m "chore: bump version"
-git tag v$(node -p "require('./package.json').version")
-# 3. 推送触发 release workflow
+# ① 开发完成后本地全量校验(与 ci.yml 保持一致,别等 CI 才发现)
+npx tsc -b                    # 主站类型
+npm test                      # 单元测试
+npm run typecheck:ext         # 插件类型
+npm run build:ext             # 插件构建
+npm run lint                  # 代码规范
+
+# ② bump 版本(已改过则跳过)
+npm version patch --no-git-tag-version
+
+# ③ 提交改动 + 打同版本标签(tag 必须与 package.json 完全一致,release.yml 会硬校验)
+git add -A && git commit -m "chore: release vX.Y.Z"
+git tag "v$(node -p "require('./package.json').version")"
+
+# ④ 推送:ci.yml 跑门禁,release.yml 发布
 git push origin main --tags
 ```
 
-推送 `v*` 标签后,workflow 自动把 `-chrome.zip` / `-firefox.zip` / `-sources.zip` 三个安装包挂到对应 Release,用户可直接下载后手动安装(侧载),无需 clone 构建。这是商店审核渠道之外的**即时分发补充**。
+#### 避免重复 changelog 的规矩
+
+`release.yml` 用 `softprops/action-gh-release` + `generate_release_notes: true`,该 action 在 Release 已存在时会把新说明**追加**到旧正文后,同一个 tag 重跑会导致 `Full Changelog` 等说明重复多份。发布步骤前已加"清空已有 Release 说明"的兜底,但仍请遵守:
+
+1. **一个版本只触发一次 release workflow**——打完 tag 一次推上去,不要重跑那个 run。
+2. **不要先在 GitHub 网页手动建 Release**——让 workflow 自己创建。
+3. 已产生重复时,去 Release 页面删掉多余行即可,不影响插件包。
+
+> 首个 tag(如 v0.1.0)没有上一版本可比,GitHub 只会生成 `commits/v0.1.0` 链接;从第二个 tag 起自动变成 `compare/v0.1.0...v0.1.1`,均属正常。
+
+#### 触发边界
+
+| 事件 | 触发 | 结果 |
+| --- | --- | --- |
+| 每次 push / PR | `ci.yml` | 只做检查,不发布 |
+| `v*` tag | `release.yml` | 校验版本 → 打包 → 发布到 Releases |
+| `wxt submit`(手动) | 商店渠道 | 与 GitHub Release 独立,需 `.env.submit` 凭据 |
 
 ## 七、Safari
 

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { AlertTriangle, Check } from "lucide-react";
 import { Button } from "@app/components/ui/button";
 import { Input } from "@app/components/ui/input";
 import { Label } from "@app/components/ui/label";
@@ -57,9 +58,9 @@ export default function App() {
 	}
 
 	return (
-		<div className="w-[420px] p-5">
-			<h1 className="mb-1 text-sm font-semibold">Bookmark Nav 插件设置</h1>
-			<p className="mb-4 text-xs text-muted-foreground">
+		<div className="mx-auto w-full max-w-[400px] p-5">
+			<h1 className="mb-1 text-[15px] font-medium tracking-tight">Bookmark Nav 插件设置</h1>
+			<p className="mb-4 text-sm text-muted-foreground">
 				令牌在导航站后台「安全」页生成,等同管理员权限,请妥善保管。
 			</p>
 			<form onSubmit={handleSave} className="space-y-4">
@@ -85,9 +86,15 @@ export default function App() {
 						required
 					/>
 				</div>
-				{error && <p className="text-xs text-destructive">{error}</p>}
+				{error && (
+					<p className="flex items-start gap-2 text-sm text-destructive">
+						<AlertTriangle className="mt-0.5 size-4 shrink-0" />
+						<span>{error}</span>
+					</p>
+				)}
 				<Button className="w-full" disabled={checking}>
-					{checking ? "验证中…" : saved ? "✅ 已保存" : "保存并验证"}
+					{saved ? <Check className="size-4" /> : null}
+					{checking ? "验证中…" : saved ? "已保存" : "保存并验证"}
 				</Button>
 			</form>
 		</div>

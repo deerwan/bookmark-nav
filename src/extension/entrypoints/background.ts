@@ -17,7 +17,7 @@ export default defineBackground(() => {
 	});
 
 	async function saveLink(url: string, title: string) {
-		const { loadConfig } = await import("../lib/config");
+		const { loadConfig, loadLastSave } = await import("../lib/config");
 		const { bookmarkExists, createBookmark } = await import("../lib/api");
 		const cfg = await loadConfig();
 		const fail = () => setBadge("!", "#dc2626");
@@ -28,7 +28,16 @@ export default defineBackground(() => {
 				setBadge("D", "#d97706");
 				return;
 			}
-			await createBookmark({ title: title.slice(0, 200), url });
+			// 沿用 popup 上次选的分类/可见性,让右键收藏和弹窗行为一致
+			const last = await loadLastSave();
+			const categoryId =
+				last && last.categoryId !== "none" ? Number(last.categoryId) : null;
+			await createBookmark({
+				title: title.slice(0, 200),
+				url,
+				categoryId,
+				visibility: last?.visibility ?? "public",
+			});
 			setBadge("✓", "#16a34a");
 		} catch (err) {
 			console.error("[Bookmark Nav] 收藏失败:", err);

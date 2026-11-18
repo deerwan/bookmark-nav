@@ -18,6 +18,22 @@ export async function saveConfig(cfg: ExtConfig): Promise<void> {
 	await chrome.storage.local.set({ [KEY]: cfg });
 }
 
+// 上次收藏用的分类与可见性:连续收藏同类网页时省去重复选择。
+// 与令牌同存 chrome.storage.local(不进云端),刷新/重启浏览器后仍保留。
+const LAST_KEY = "lastSave";
+export type LastSave = { categoryId: string; visibility: "public" | "private" };
+
+export async function loadLastSave(): Promise<LastSave | null> {
+	const stored = (await chrome.storage.local.get(LAST_KEY)) as Record<string, unknown>;
+	const v = stored[LAST_KEY] as Partial<LastSave> | undefined;
+	if (!v?.categoryId || (v.visibility !== "public" && v.visibility !== "private")) return null;
+	return v as LastSave;
+}
+
+export async function saveLastSave(v: LastSave): Promise<void> {
+	await chrome.storage.local.set({ [LAST_KEY]: v });
+}
+
 // 规范化站点地址:去尾部斜杠,校验协议,供请求拼接与权限申请使用。
 // 缺协议的输入(如 example.com)返回 null 交由调用方提示,不能让 new URL 抛异常
 export function normalizeSiteUrl(input: string): string | null {

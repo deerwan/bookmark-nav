@@ -70,6 +70,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # softprops 在 Release 已存在时会把新生成的说明"追加"到旧正文后面,
+      # 同一个 tag 重跑 workflow 会导致 Full Changelog 等说明重复多份。
+      # 发布前先清空正文,让 generate_release_notes 只生成一次;
+      # Release 不存在时 gh 会报错,用 || true 忽略(此时 softprops 会新建)。
+      - name: 清空已有 Release 说明(防重复追加)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release edit "${{ github.ref_name }}" --notes "" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # 仅 tag 推送时真正发布;手动触发时只做构建验证,不创建 Release
       - name: 发布到 GitHub Releases
         if: startsWith(github.ref, 'refs/tags/v')

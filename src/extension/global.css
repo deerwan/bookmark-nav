@@ -1,2 +1,9 @@
 /* 插件所有页面共用样式:直接复用主前端的主题变量与 shadcn 设计语言 */
 @import "../react-app/index.css";
+
+/* 清掉默认 8px margin。不设 min-width:Edge 选项气泡的 CSS 视口可能窄于 400px,
+   强制下限会让内容超出视口被裁切;宽度完全交给容器的 max-w-[400px] + w-full。 */
+html,
+body {
+	margin: 0;
+}
