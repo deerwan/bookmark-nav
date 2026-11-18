@@ -5,12 +5,12 @@ import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { asBatch, createDb, type Db } from "../db/client";
 import {
 	aiUsage,
+	apiTokens,
 	bookmarks,
 	bookmarkTags,
 	categories,
 	settings,
 	tags,
-	users,
 } from "../db/schema";
 import type { AppEnv } from "../lib/types";
 import { requireAuth } from "../middleware/auth";
@@ -1224,43 +1224,105 @@ ${pageText || "（无）"}`;
 			})),
 		});
 	})
-	// 浏览器插件访问令牌状态(只回末 4 位与创建时间,永不回明文)
-	.get("/token", async (c) => {
+	// ---- 浏览器插件令牌(一用户多个)----
+	// 列表:永不回哈希/明文,只回末 4 位与元数据
+	.get("/tokens", async (c) => {
 		const db = createDb(c.env.DB);
-		const [row] = await db
+		const rows = await db
 			.select({
-				hint: users.apiTokenHint,
-				createdAt: users.apiTokenCreatedAt,
+				id: apiTokens.id,
+				name: apiTokens.name,
+				hint: apiTokens.hint,
+				status: apiTokens.status,
+				expiresAt: apiTokens.expiresAt,
+				lastUsedAt: apiTokens.lastUsedAt,
+				createdAt: apiTokens.createdAt,
 			})
-			.from(users)
-			.where(eq(users.id, c.get("user")!.id))
-			.limit(1);
+			.from(apiTokens)
+			.where(eq(apiTokens.userId, c.get("user")!.id))
+			.orderBy(desc(apiTokens.createdAt), desc(apiTokens.id));
 		return c.json({
-			exists: !!row?.hint,
-			hint: row?.hint ?? null,
-			createdAt: row?.createdAt?.getTime() ?? null,
+			tokens: rows.map((r) => ({
+				...r,
+				expiresAt: r.expiresAt?.getTime() ?? null,
+				lastUsedAt: r.lastUsedAt?.getTime() ?? null,
+				createdAt: r.createdAt.getTime(),
+			})),
 		});
 	})
-	// 生成(或轮换)令牌:明文仅在本次响应中返回一次,旧令牌同时失效
-	.post("/token", async (c) => {
-		const db = createDb(c.env.DB);
-		const token = generateApiToken();
-		await db
-			.update(users)
-			.set({
-				apiTokenHash: await hashApiToken(token),
-				apiTokenHint: tokenHint(token),
-				apiTokenCreatedAt: new Date(),
-			})
-			.where(eq(users.id, c.get("user")!.id));
-		return c.json({ token, hint: tokenHint(token) });
-	})
-	// 吊销令牌:立即失效,插件下次请求收到 401
-	.delete("/token", async (c) => {
-		const db = createDb(c.env.DB);
-		await db
-			.update(users)
-			.set({ apiTokenHash: null, apiTokenHint: null, apiTokenCreatedAt: null })
-			.where(eq(users.id, c.get("user")!.id));
-		return c.json({ ok: true });
-	});
+	// 新建:明文仅在本次响应返回一次;上限 20 个(对齐主流 PAT 实践)
+	.post(
+		"/tokens",
+		zValidator(
+			"json",
+			z.object({
+				name: z.string().trim().min(1).max(50),
+				expiresAt: z.coerce.number().int().positive().nullable().optional(),
+			}),
+		),
+		async (c) => {
+			const db = createDb(c.env.DB);
+			const me = c.get("user")!.id;
+			const existing = await db
+				.select({ id: apiTokens.id })
+				.from(apiTokens)
+				.where(eq(apiTokens.userId, me));
+			if (existing.length >= 20) {
+				return c.json({ error: "令牌数量已达上限(20),请先删除不用的令牌" }, 400);
+			}
+			const { name, expiresAt } = c.req.valid("json");
+			const token = generateApiToken();
+			const [row] = await db
+				.insert(apiTokens)
+				.values({
+					userId: me,
+					name,
+					tokenHash: await hashApiToken(token),
+					hint: tokenHint(token),
+					expiresAt: expiresAt ? new Date(expiresAt) : null,
+				})
+				.returning({ id: apiTokens.id });
+			return c.json({ id: row.id, token, hint: tokenHint(token) }, 201);
+		},
+	)
+	// 改名 / 启停:只操作本人令牌,防越权
+	.patch(
+		"/tokens/:id",
+		zValidator("param", z.object({ id: z.coerce.number().int() })),
+		zValidator(
+			"json",
+			z
+				.object({
+					name: z.string().trim().min(1).max(50).optional(),
+					status: z.enum(["active", "disabled"]).optional(),
+				})
+				.refine((v) => v.name !== undefined || v.status !== undefined, "没有可更新字段"),
+		),
+		async (c) => {
+			const db = createDb(c.env.DB);
+			const { id } = c.req.valid("param");
+			const body = c.req.valid("json");
+			const updated = await db
+				.update(apiTokens)
+				.set(body)
+				.where(and(eq(apiTokens.id, id), eq(apiTokens.userId, c.get("user")!.id)))
+				.returning({ id: apiTokens.id });
+			if (!updated.length) return c.json({ error: "令牌不存在" }, 404);
+			return c.json({ ok: true });
+		},
+	)
+	// 删除单个令牌:立即生效,其他令牌不受影响
+	.delete(
+		"/tokens/:id",
+		zValidator("param", z.object({ id: z.coerce.number().int() })),
+		async (c) => {
+			const db = createDb(c.env.DB);
+			const { id } = c.req.valid("param");
+			const deleted = await db
+				.delete(apiTokens)
+				.where(and(eq(apiTokens.id, id), eq(apiTokens.userId, c.get("user")!.id)))
+				.returning({ id: apiTokens.id });
+			if (!deleted.length) return c.json({ error: "令牌不存在" }, 404);
+			return c.json({ ok: true });
+		},
+	);

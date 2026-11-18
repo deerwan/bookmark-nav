@@ -134,7 +134,9 @@ export async function verifyConfig(siteUrl: string, token: string): Promise<stri
 		return "无法连接站点,请检查地址";
 	}
 	try {
-		const res = await fetch(`${siteUrl}/api/admin/token`, {
+		// 用令牌列表接口验证:旧的 /api/admin/token 在多令牌改造中已移除。
+		// 该接口需要登录态,Bearer 令牌有效时返回 200,失效返回 401。
+		const res = await fetch(`${siteUrl}/api/admin/tokens`, {
 			headers: { Authorization: `Bearer ${token}` },
 			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 		});

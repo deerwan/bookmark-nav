@@ -6,7 +6,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import { createDb } from "../db/client";
-import { users } from "../db/schema";
+import { apiTokens, users } from "../db/schema";
 import { hashPassword, verifyPassword } from "../lib/password";
 import { requireAuth } from "../middleware/auth";
 import { AUTH_COOKIE, TOKEN_TTL_SECONDS, type AppEnv } from "../lib/types";
@@ -159,16 +159,13 @@ export const authRoutes = new Hono<AppEnv>()
 			if (!user || !(await verifyPassword(oldPassword, user.passwordHash))) {
 				return c.json({ error: "当前密码错误" }, 400);
 			}
-			// tokenVersion 自增,使此前签发的所有 token 立即失效;
-			// 同时吊销浏览器插件令牌(PAT 权限等同管理员,改密码必须连带失效)
+			// tokenVersion 自增,使此前签发的所有 JWT 立即失效;
+			// 同时撤销该用户全部插件令牌(权限等同管理员,改密码必须连带失效)
 			const [updated] = await db
 				.update(users)
 				.set({
 					passwordHash: await hashPassword(newPassword),
 					tokenVersion: sql`${users.tokenVersion} + 1`,
-					apiTokenHash: null,
-					apiTokenHint: null,
-					apiTokenCreatedAt: null,
 				})
 				.where(eq(users.id, me.id))
 				.returning({
@@ -176,6 +173,7 @@ export const authRoutes = new Hono<AppEnv>()
 					username: users.username,
 					tokenVersion: users.tokenVersion,
 				});
+			await db.delete(apiTokens).where(eq(apiTokens.userId, me.id));
 			// 重新签发当前会话,避免改密码后把自己也踢下线
 			await issueToken(c, updated);
 			return c.json({ ok: true });

@@ -25,6 +25,40 @@ export const users = sqliteTable(
 	],
 );
 
+// 浏览器插件访问令牌:一用户可有多个,每台设备/用途一个,可单独吊销。
+// 旧的 users.apiTokenHash 三字段保留做迁移回退,新写入一律走本表。
+export const apiTokens = sqliteTable(
+	"api_tokens",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		userId: integer("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		// 用途备注,如 "Macbook Chrome"
+		name: text("name").notNull(),
+		// SHA-256,只存哈希;认证按此等值查询
+		tokenHash: text("token_hash").notNull(),
+		// 末 4 位,后台列表展示用于辨认
+		hint: text("hint").notNull(),
+		// active 可用;disabled 为手动停用(删除走 DELETE)
+		status: text("status", { enum: ["active", "disabled"] })
+			.notNull()
+			.default("active"),
+		// 预留细粒度权限(JSON),本期不写入
+		scopes: text("scopes"),
+		// null 表示永不过期
+		expiresAt: integer("expires_at", { mode: "timestamp" }),
+		lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+		createdAt: integer("created_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [
+		uniqueIndex("api_tokens_hash_idx").on(t.tokenHash),
+		index("api_tokens_user_idx").on(t.userId),
+	],
+);
+
 // 分类(支持任意层级嵌套,parentId 为 null 表示顶级)
 export const categories = sqliteTable(
 	"categories",

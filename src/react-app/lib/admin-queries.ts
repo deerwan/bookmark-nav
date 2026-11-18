@@ -594,23 +594,30 @@ export type AITestConfig = {
 	model: string;
 };
 
-// 浏览器插件访问令牌
-export type ApiTokenStatus = {
-	exists: boolean;
-	hint: string | null;
-	createdAt: number | null;
+// 浏览器插件访问令牌(一用户多个)
+export type ApiTokenInfo = {
+	id: number;
+	name: string;
+	hint: string;
+	status: "active" | "disabled";
+	expiresAt: number | null;
+	lastUsedAt: number | null;
+	createdAt: number;
 };
 export type ApiTokenCreated = {
+	id: number;
 	token: string;
 	hint: string;
 };
 
-export function useApiToken() {
+const TOKEN_KEY = ["admin-api-tokens"];
+
+export function useApiTokens() {
 	return useQuery({
-		queryKey: ["admin-api-token"],
+		queryKey: TOKEN_KEY,
 		queryFn: async () => {
-			const res = await client.api.admin.token.$get();
-			if (!res.ok) throw new Error("加载令牌状态失败");
+			const res = await client.api.admin.tokens.$get();
+			if (!res.ok) throw new Error("加载令牌列表失败");
 			return res.json();
 		},
 	});
@@ -619,30 +626,60 @@ export function useApiToken() {
 export function useCreateApiToken() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: async () => {
-			const res = await client.api.admin.token.$post();
-			if (!res.ok) throw new Error("生成令牌失败");
-			return res.json();
+		mutationFn: async (input: { name: string; expiresAt?: number | null }) => {
+			const res = await client.api.admin.tokens.$post({ json: input });
+			if (!res.ok) {
+				const body = (await res.json().catch(() => null)) as { error?: string } | null;
+				throw new Error(body?.error ?? "生成令牌失败");
+			}
+			return res.json() as Promise<ApiTokenCreated>;
 		},
-		onSuccess: async (data) => {
-			await qc.invalidateQueries({ queryKey: ["admin-api-token"] });
-			toast.success("令牌已生成,请立即复制保存");
-			return data;
+		onSuccess: async () => {
+			await qc.invalidateQueries({ queryKey: TOKEN_KEY });
 		},
 		onError: (e) => toast.error(e.message),
 	});
 }
 
-export function useRevokeApiToken() {
+export function useUpdateApiToken() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: async () => {
-			const res = await client.api.admin.token.$delete();
+		mutationFn: async ({
+			id,
+			data,
+		}: {
+			id: number;
+			data: { name?: string; status?: "active" | "disabled" };
+		}) => {
+			const res = await client.api.admin.tokens[":id"].$patch({
+				param: { id: String(id) },
+				json: data,
+			});
+			if (!res.ok) {
+				const body = (await res.json().catch(() => null)) as { error?: string } | null;
+				throw new Error(body?.error ?? "更新失败");
+			}
+		},
+		onSuccess: async () => {
+			await qc.invalidateQueries({ queryKey: TOKEN_KEY });
+			toast.success("已更新");
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useDeleteApiToken() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (id: number) => {
+			const res = await client.api.admin.tokens[":id"].$delete({
+				param: { id: String(id) },
+			});
 			if (!res.ok) throw new Error("吊销失败");
 		},
 		onSuccess: async () => {
-			await qc.invalidateQueries({ queryKey: ["admin-api-token"] });
-			toast.success("令牌已吊销");
+			await qc.invalidateQueries({ queryKey: TOKEN_KEY });
+			toast.success("令牌已吊销,其他令牌不受影响");
 		},
 		onError: (e) => toast.error(e.message),
 	});

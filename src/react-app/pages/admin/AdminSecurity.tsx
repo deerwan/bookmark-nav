@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuthStatus } from "@/lib/queries";
@@ -9,116 +11,201 @@ import {
 	useChangePassword,
 	useChangeUsername,
 	useCreateApiToken,
-	useApiToken,
-	useRevokeApiToken,
+	useApiTokens,
+	useUpdateApiToken,
+	useDeleteApiToken,
+	type ApiTokenCreated,
 } from "@/lib/admin-queries";
 import { ConfirmDialog, type ConfirmState } from "@/components/confirm-dialog";
 
-// 浏览器插件访问令牌卡片:生成(明文仅显示一次)/ 吊销
+function formatTime(ts: number | null, label: string) {
+	return ts ? `${label} ${new Date(ts).toLocaleString()}` : null;
+}
+
+// 浏览器插件令牌:一用户多个,每台设备/用途一个,可单独启停/吊销
 function ApiTokenCard() {
-	const { data: status, isPending, isError, refetch } = useApiToken();
+	const { data, isPending, isError, refetch } = useApiTokens();
 	const createToken = useCreateApiToken();
-	const revokeToken = useRevokeApiToken();
+	const updateToken = useUpdateApiToken();
+	const deleteToken = useDeleteApiToken();
 	const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-	// 刚生成的明文令牌,只在本次会话展示一次;关闭后不再可查看
-	const [freshToken, setFreshToken] = useState<string | null>(null);
+	// 新建弹窗
+	const [createOpen, setCreateOpen] = useState(false);
+	const [newName, setNewName] = useState("");
+	// 刚生成的明文令牌,只在本次展示一次;关闭后不再可查看
+	const [fresh, setFresh] = useState<ApiTokenCreated | null>(null);
 
-	function handleCreate() {
-		createToken.mutate(undefined, {
-			onSuccess: (data) => setFreshToken(data?.token ?? null),
+	function handleCreate(e: FormEvent) {
+		e.preventDefault();
+		const name = newName.trim();
+		if (!name) return;
+		createToken.mutate(
+			{ name },
+			{
+				onSuccess: (created) => {
+					setFresh(created);
+					setNewName("");
+					setCreateOpen(false);
+				},
+			},
+		);
+	}
+
+	function askToggle(id: number, current: "active" | "disabled", name: string) {
+		const next = current === "active" ? "disabled" : "active";
+		setConfirm({
+			title: next === "disabled" ? `停用「${name}」?` : `启用「${name}」?`,
+			description:
+				next === "disabled"
+					? "使用该令牌的插件将立即失去访问权限,可随时重新启用。"
+					: "启用后使用该令牌的插件恢复访问。",
+			confirmText: next === "disabled" ? "停用" : "启用",
+			onConfirm: () => updateToken.mutate({ id, data: { status: next } }),
 		});
 	}
 
-	function askRotate() {
+	function askDelete(id: number, name: string) {
 		setConfirm({
-			title: "重新生成令牌?",
-			description: "旧令牌将立即失效,已配置的浏览器插件需要更新为新令牌。",
-			confirmText: "重新生成",
-			onConfirm: handleCreate,
-		});
-	}
-
-	function askRevoke() {
-		setConfirm({
-			title: "吊销令牌?",
-			description: "所有使用该令牌的浏览器插件将立即失去访问权限。",
+			title: `吊销「${name}」?`,
+			description: "使用该令牌的插件将立即失效,其他令牌不受影响。此操作不可撤销。",
 			confirmText: "吊销",
 			onConfirm: () => {
-				setFreshToken(null);
-				revokeToken.mutate();
+				if (fresh?.id === id) setFresh(null);
+				deleteToken.mutate(id);
 			},
 		});
 	}
 
 	function handleCopy() {
-		if (!freshToken) return;
+		if (!fresh) return;
 		navigator.clipboard
-			.writeText(freshToken)
+			.writeText(fresh.token)
 			.then(() => toast.success("已复制到剪贴板"))
 			.catch(() => toast.error("复制失败,请手动选择复制"));
 	}
 
-	const createdAt = status?.createdAt ? new Date(status.createdAt).toLocaleString() : null;
+	const tokens = data?.tokens ?? [];
 
 	return (
 		<Card>
-			<CardHeader>
-				<CardTitle>浏览器插件令牌</CardTitle>
-				<CardDescription>
-					为浏览器插件生成访问令牌(等同管理员权限,请妥善保管)。生成后只显示一次,仅可在插件中配置使用。
-				</CardDescription>
+			<CardHeader className="flex flex-row items-start justify-between gap-4">
+				<div>
+					<CardTitle>浏览器插件令牌</CardTitle>
+					<CardDescription>
+						建议每台设备/每个浏览器创建一个令牌,便于单独吊销。改密码会撤销全部令牌。
+					</CardDescription>
+				</div>
+				<Button
+					type="button"
+					size="sm"
+					disabled={tokens.length >= 20}
+					onClick={() => setCreateOpen(true)}
+				>
+					新建令牌
+				</Button>
 			</CardHeader>
 			<CardContent className="space-y-4">
-				{freshToken ? (
-					<div className="space-y-2">
-						<Label htmlFor="api-token">令牌(仅此一次,关闭后不可再查看)</Label>
+				{fresh && (
+					<div className="space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
+						<Label htmlFor="api-token">
+							令牌「{tokens.find((t) => t.id === fresh.id)?.name ?? "新令牌"}」— 仅此一次,关闭后不可再查看
+						</Label>
 						<div className="flex gap-2">
-							<Input id="api-token" readOnly value={freshToken} className="font-mono text-xs" />
+							<Input id="api-token" readOnly value={fresh.token} className="font-mono text-xs" />
 							<Button type="button" variant="outline" onClick={handleCopy}>
 								复制
 							</Button>
-							<Button type="button" variant="ghost" onClick={() => setFreshToken(null)}>
+							<Button type="button" variant="ghost" onClick={() => setFresh(null)}>
 								我已保存
 							</Button>
 						</div>
 					</div>
+				)}
+
+				{isError ? (
+					<button type="button" className="text-sm text-muted-foreground underline underline-offset-2" onClick={() => refetch()}>
+						令牌列表加载失败,点击重试
+					</button>
+				) : isPending ? (
+					<p className="text-sm text-muted-foreground">加载中…</p>
+				) : tokens.length === 0 ? (
+					<p className="text-sm text-muted-foreground">还没有令牌,点右上角「新建令牌」开始。</p>
 				) : (
-					<div className="flex items-center justify-between gap-4">
-						<div className="text-sm text-muted-foreground">
-							{isError ? (
-								// 状态未知时按钮禁用(见下),这里给出可恢复的入口,而不是误显「未启用」
-								<button
-									type="button"
-									className="underline underline-offset-2"
-									onClick={() => refetch()}
-								>
-									令牌状态加载失败,点击重试
-								</button>
-							) : status?.exists ? (
-								`已启用 · 尾号 …${status.hint}${createdAt ? ` · 创建于 ${createdAt}` : ""}`
-							) : (
-								"未启用"
-							)}
-						</div>
-						<div className="flex gap-2">
-							{/* 状态未知(在途/失败)时禁用:此时无法区分「未启用」和「已启用」,
-								放行会绕过确认弹窗直接轮换,静默吊销插件正在使用的令牌 */}
-							<Button
-								type="button"
-								variant="outline"
-								disabled={isPending || isError}
-								onClick={status?.exists ? askRotate : handleCreate}
-							>
-								{status?.exists ? "重新生成" : "生成令牌"}
-							</Button>
-							{status?.exists && (
-								<Button type="button" variant="destructive" onClick={askRevoke}>
-									吊销
-								</Button>
-							)}
-						</div>
+					<div className="divide-y rounded-lg border">
+						{tokens.map((t) => (
+							<div key={t.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+								<div className="min-w-0 space-y-0.5">
+									<div className="flex items-center gap-2">
+										<span className="truncate text-sm font-medium">{t.name}</span>
+										<Badge variant={t.status === "active" ? "secondary" : "outline"}>
+											{t.status === "active" ? "启用" : "已停用"}
+										</Badge>
+									</div>
+									<p className="font-mono text-xs text-muted-foreground">bnav_…{t.hint}</p>
+									<p className="text-xs text-muted-foreground">
+										{[
+											formatTime(t.createdAt, "创建于"),
+											formatTime(t.lastUsedAt, "最后使用"),
+											formatTime(t.expiresAt, "过期于"),
+										]
+											.filter(Boolean)
+											.join(" · ")}
+									</p>
+								</div>
+								<div className="flex shrink-0 gap-1">
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={() => askToggle(t.id, t.status, t.name)}
+									>
+										{t.status === "active" ? "停用" : "启用"}
+									</Button>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="text-destructive"
+										onClick={() => askDelete(t.id, t.name)}
+									>
+										吊销
+									</Button>
+								</div>
+							</div>
+						))}
 					</div>
 				)}
+
+				<Dialog open={createOpen} onOpenChange={setCreateOpen}>
+					<DialogContent>
+						<form onSubmit={handleCreate} className="space-y-4">
+							<DialogHeader>
+								<DialogTitle>新建插件令牌</DialogTitle>
+								<DialogDescription>令牌等同管理员权限,生成后只显示一次,请立即复制保存。</DialogDescription>
+							</DialogHeader>
+							<div className="space-y-2">
+								<Label htmlFor="token-name">名称</Label>
+								<Input
+									id="token-name"
+									value={newName}
+									onChange={(e) => setNewName(e.target.value)}
+									placeholder="如 Macbook Chrome / 家里电脑"
+									maxLength={50}
+									required
+								/>
+							</div>
+							<DialogFooter>
+								<Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
+									取消
+								</Button>
+								<Button type="submit" disabled={createToken.isPending}>
+									{createToken.isPending ? "生成中…" : "生成令牌"}
+								</Button>
+							</DialogFooter>
+						</form>
+					</DialogContent>
+				</Dialog>
+
 				<ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />
 			</CardContent>
 		</Card>

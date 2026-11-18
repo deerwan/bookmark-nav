@@ -1,6 +1,6 @@
 {
   "name": "bookmark-nav",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "多功能简洁书签导航站:Fork 后部署到 Cloudflare Workers,支持分类嵌套、私密书签、浏览器书签导入导出、死链检测",
   "license": "GPL-3.0-only",
   "dependencies": {

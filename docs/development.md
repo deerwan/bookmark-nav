@@ -26,7 +26,8 @@ src/
 └── extension/         # 浏览器插件(WXT)
 ```
 
-- **认证双通道**:网页用 `HttpOnly + SameSite=Lax` cookie JWT;浏览器插件用 `Authorization: Bearer bnav_…` 访问令牌(PAT),两者注入同一 `user`。改密码时 `tokenVersion++` 使 JWT 失效,同时吊销 PAT。
+- **认证双通道**:网页用 `HttpOnly + SameSite=Lax` cookie JWT;浏览器插件用 `Authorization: Bearer bnav_…` 访问令牌(PAT),两者注入同一 `user`。改密码时 `tokenVersion++` 使 JWT 失效,并删除该用户全部 PAT。
+- **多令牌**:`api_tokens` 表一用户多条(可命名/启停/过期/记录最后使用),`token_hash` 唯一索引供认证等值查询;旧 `users.apiTokenHash` 三字段在认证里做回退兼容,新写入只走新表。管理接口在 `/api/admin/tokens`,列表永不回明文。
 - **CORS**:仅放行 `chrome-extension://` / `moz-extension://` / `safari-web-extension://` origin,`credentials:false`(插件不用 cookie)。
 - **公开接口私密过滤**:未登录时分类需整条祖先链为 public 才可见;点击计数对无权限书签也返回 `ok:true`,防止探测私密书签存在性。
 

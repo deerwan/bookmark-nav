@@ -3,9 +3,29 @@ import { getCookie } from "hono/cookie";
 import { verify } from "hono/jwt";
 import { eq } from "drizzle-orm";
 import { createDb, type Db } from "../db/client";
-import { users } from "../db/schema";
+import { apiTokens, users } from "../db/schema";
 import { hashApiToken, isApiToken } from "../lib/token";
 import { AUTH_COOKIE, type AppEnv, type JwtUser } from "../lib/types";
+
+// lastUsedAt 写库节流:每 60s 最多写一次,避免每次插件请求都 UPDATE。
+// Worker 会被回收,缓存丢失只是多写一次,无正确性问题。
+const LAST_USED_THROTTLE_MS = 60_000;
+const lastUsedCache = new Map<number, number>();
+
+function maybeTouchLastUsed(db: Db, tokenId: number) {
+	const now = Date.now();
+	if (now - (lastUsedCache.get(tokenId) ?? 0) < LAST_USED_THROTTLE_MS) return;
+	lastUsedCache.set(tokenId, now);
+	try {
+		void db
+			.update(apiTokens)
+			.set({ lastUsedAt: new Date(now) })
+			.where(eq(apiTokens.id, tokenId))
+			.run();
+	} catch {
+		// 写失败不影响认证结果,下次请求可重试
+	}
+}
 
 // 软认证:有合法 token 则注入 user,没有也放行(公开接口按登录态过滤 visibility)
 export const softAuth = createMiddleware<AppEnv>(async (c, next) => {
@@ -59,21 +79,44 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
 	await next();
 });
 
-// 按令牌哈希查用户;令牌与账号绑定,无版本校验(改密码时直接吊销)
+// 按令牌哈希查用户:优先查 api_tokens 新表,查不到再回退旧 users 字段(迁移兼容)。
+// 返回 user 时附带 tokenId 供 lastUsedAt 节流写入。
 export async function userFromApiToken(
 	db: Db,
 	raw: string,
-): Promise<JwtUser | null> {
+): Promise<(JwtUser & { tokenId?: number }) | null> {
 	const hash = await hashApiToken(raw);
-	const [user] = await db
+	const [row] = await db
 		.select({
-			id: users.id,
+			tokenId: apiTokens.id,
+			userId: apiTokens.userId,
+			status: apiTokens.status,
+			expiresAt: apiTokens.expiresAt,
 			username: users.username,
-			apiTokenHash: users.apiTokenHash,
 		})
+		.from(apiTokens)
+		.innerJoin(users, eq(apiTokens.userId, users.id))
+		.where(eq(apiTokens.tokenHash, hash))
+		.limit(1);
+	if (row && row.status === "active" && (!row.expiresAt || row.expiresAt.getTime() > Date.now())) {
+		maybeTouchLastUsed(db, row.tokenId);
+		return { id: row.userId, username: row.username, tokenId: row.tokenId };
+	}
+
+	// 回退:仅当该用户新表里一条令牌都没有(尚未使用新系统)时,才认旧字段。
+	// 否则用户删除/停用新表令牌后会被旧字段"复活",导致吊销失效。
+	const [legacy] = await db
+		.select({ id: users.id, username: users.username })
 		.from(users)
 		.where(eq(users.apiTokenHash, hash))
 		.limit(1);
-	if (!user || user.apiTokenHash !== hash) return null;
-	return { id: user.id, username: user.username };
+	if (legacy) {
+		const [anyNew] = await db
+			.select({ id: apiTokens.id })
+			.from(apiTokens)
+			.where(eq(apiTokens.userId, legacy.id))
+			.limit(1);
+		if (!anyNew) return { id: legacy.id, username: legacy.username };
+	}
+	return null;
 }
